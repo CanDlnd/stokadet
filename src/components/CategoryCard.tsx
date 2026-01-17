@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import type { Category } from '../types/database'
 import { useDeleteCategory, useUpdateCategory } from '../hooks/useCategories'
 import { ItemList } from './ItemList'
+import { useNotification } from '../contexts/NotificationContext'
 
 interface CategoryCardProps {
   category: Category
@@ -14,6 +15,7 @@ export function CategoryCard({ category, searchQuery = '' }: CategoryCardProps) 
   const [editName, setEditName] = useState(category.name)
   const deleteCategory = useDeleteCategory()
   const updateCategory = useUpdateCategory()
+  const { showSuccess, showError, confirm } = useNotification()
 
   // Arama yapıldığında otomatik aç
   useEffect(() => {
@@ -22,9 +24,25 @@ export function CategoryCard({ category, searchQuery = '' }: CategoryCardProps) 
     }
   }, [searchQuery])
 
-  const handleDelete = () => {
-    if (confirm(`"${category.name}" kategorisi ve tüm ürünleri silinsin mi?`)) {
-      deleteCategory.mutate(category.id)
+  const handleDelete = async () => {
+    const confirmed = await confirm({
+      type: 'danger',
+      title: '🗑️ Kategori Silme',
+      message: 'Bu kategori ve içindeki TÜM ürünler silinecek. Bu işlem geri alınamaz!',
+      details: [
+        { label: 'Kategori', value: category.name },
+      ],
+      confirmText: 'Evet, Sil',
+      cancelText: 'Vazgeç',
+    })
+
+    if (confirmed) {
+      try {
+        await deleteCategory.mutateAsync(category.id)
+        showSuccess('Kategori Silindi', `"${category.name}" ve tüm ürünleri silindi`)
+      } catch (err) {
+        showError('Silme Başarısız', err instanceof Error ? err.message : 'Bir hata oluştu')
+      }
     }
   }
 
@@ -44,9 +62,10 @@ export function CategoryCard({ category, searchQuery = '' }: CategoryCardProps) 
         categoryId: category.id, 
         name: editName.trim() 
       })
+      showSuccess('Kategori Güncellendi', `Yeni ad: "${editName.trim()}"`)
       setIsEditing(false)
     } catch (err) {
-      alert(err instanceof Error ? err.message : 'Güncelleme başarısız')
+      showError('Güncelleme Başarısız', err instanceof Error ? err.message : 'Bir hata oluştu')
     }
   }
 
@@ -62,17 +81,17 @@ export function CategoryCard({ category, searchQuery = '' }: CategoryCardProps) 
   const isDisabled = deleteCategory.isPending || updateCategory.isPending
 
   return (
-    <div className="bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] overflow-hidden shadow-sm hover:shadow-md transition-shadow">
+    <div className="bg-white rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-sm hover:shadow-md transition-all duration-300 card-hover">
       {/* Kategori Başlığı */}
-      <div className="px-4 sm:px-5 py-4 bg-gradient-to-r from-[var(--color-primary)]/5 to-transparent border-b border-[var(--color-border)]">
-        <div className="flex items-center justify-between gap-2">
+      <div className="px-5 py-4 bg-gradient-to-r from-[var(--color-primary)]/5 via-[var(--color-primary)]/3 to-transparent border-b border-[var(--color-border)]">
+        <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-3 flex-1 min-w-0">
             <button
               onClick={() => setIsExpanded(!isExpanded)}
-              className="w-8 h-8 flex-shrink-0 rounded-lg bg-[var(--color-primary)]/10 flex items-center justify-center hover:bg-[var(--color-primary)]/20 transition-colors"
+              className="w-10 h-10 flex-shrink-0 rounded-xl bg-gradient-to-br from-[var(--color-primary)]/20 to-[var(--color-primary)]/5 flex items-center justify-center hover:from-[var(--color-primary)]/30 hover:to-[var(--color-primary)]/10 transition-all group"
             >
               <svg 
-                className={`w-4 h-4 text-[var(--color-primary)] transition-transform ${isExpanded ? 'rotate-90' : ''}`} 
+                className={`w-5 h-5 text-[var(--color-primary)] transition-transform duration-200 ${isExpanded ? 'rotate-90' : ''} group-hover:scale-110`} 
                 fill="none" 
                 stroke="currentColor" 
                 viewBox="0 0 24 24"
@@ -89,14 +108,15 @@ export function CategoryCard({ category, searchQuery = '' }: CategoryCardProps) 
                 onKeyDown={handleKeyDown}
                 onBlur={handleSave}
                 autoFocus
-                className="flex-1 px-3 py-1.5 text-lg font-semibold rounded-lg border border-[var(--color-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] bg-white"
+                className="flex-1 px-4 py-2 text-lg font-semibold rounded-xl border-2 border-[var(--color-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 bg-white"
               />
             ) : (
               <button
                 onClick={() => setIsExpanded(!isExpanded)}
                 className="text-left flex-1 min-w-0"
               >
-                <h3 className="text-lg font-semibold text-[var(--color-text)] truncate">
+                <h3 className="text-lg font-bold text-[var(--color-text)] truncate flex items-center gap-2">
+                  <span className="text-xl">📁</span>
                   {category.name}
                 </h3>
               </button>
@@ -108,7 +128,7 @@ export function CategoryCard({ category, searchQuery = '' }: CategoryCardProps) 
               <button
                 onClick={handleEdit}
                 disabled={isDisabled}
-                className="p-2 text-[var(--color-text-muted)] hover:text-[var(--color-primary)] hover:bg-[var(--color-primary)]/10 rounded-lg transition-all disabled:opacity-50"
+                className="p-2.5 text-[var(--color-text-muted)] hover:text-[var(--color-primary)] hover:bg-[var(--color-primary)]/10 rounded-xl transition-all disabled:opacity-50"
                 title="Düzenle"
               >
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -119,7 +139,7 @@ export function CategoryCard({ category, searchQuery = '' }: CategoryCardProps) 
             <button
               onClick={handleDelete}
               disabled={isDisabled}
-              className="p-2 text-[var(--color-text-muted)] hover:text-red-500 hover:bg-red-50 rounded-lg transition-all disabled:opacity-50"
+              className="p-2.5 text-[var(--color-text-muted)] hover:text-red-500 hover:bg-red-50 rounded-xl transition-all disabled:opacity-50"
               title="Sil"
             >
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -131,11 +151,15 @@ export function CategoryCard({ category, searchQuery = '' }: CategoryCardProps) 
       </div>
 
       {/* Ürün Listesi */}
-      {isExpanded && (
-        <div className="p-4 sm:p-5">
+      <div 
+        className={`transition-all duration-300 ease-in-out overflow-hidden ${
+          isExpanded ? 'max-h-[2000px] opacity-100' : 'max-h-0 opacity-0'
+        }`}
+      >
+        <div className="p-5">
           <ItemList categoryId={category.id} searchQuery={searchQuery} />
         </div>
-      )}
+      </div>
     </div>
   )
 }

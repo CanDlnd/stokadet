@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { Item } from '../types/database'
 import { useUpdateStock, useDeleteItem } from '../hooks/useItems'
+import { useNotification } from '../contexts/NotificationContext'
 
 interface ItemRowProps {
   item: Item
@@ -11,13 +12,14 @@ export function ItemRow({ item, onEdit }: ItemRowProps) {
   const [quantity, setQuantity] = useState<string>('1')
   const [error, setError] = useState<string | null>(null)
   const [isProcessing, setIsProcessing] = useState(false)
+  const [successAnimation, setSuccessAnimation] = useState<'purchase' | 'sale' | null>(null)
   const updateStock = useUpdateStock()
   const deleteItem = useDeleteItem()
+  const { showSuccess, showError, confirm } = useNotification()
 
   // Sadece pozitif tam sayı kabul et
   const handleQuantityChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value
-    // Sadece rakamları kabul et
     if (value === '' || /^[1-9]\d*$/.test(value)) {
       setQuantity(value)
       setError(null)
@@ -26,16 +28,13 @@ export function ItemRow({ item, onEdit }: ItemRowProps) {
 
   // Keyboard'da sadece rakam tuşlarına izin ver
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    // Allow: backspace, delete, tab, escape, enter, arrows
     if ([8, 46, 9, 27, 13, 37, 38, 39, 40].includes(e.keyCode)) {
       return
     }
-    // Block 0 if input is empty (prevent leading zero)
     if (e.key === '0' && quantity === '') {
       e.preventDefault()
       return
     }
-    // Block non-numeric
     if (!/[0-9]/.test(e.key)) {
       e.preventDefault()
     }
@@ -50,19 +49,33 @@ export function ItemRow({ item, onEdit }: ItemRowProps) {
       return
     }
 
-    // Büyük adetlerde onay sor
-    if (qty >= 50) {
-      const actionText = type === 'PURCHASE' ? 'alım' : 'satış'
-      if (!confirm(`${qty} adet ${actionText} işlemi yapılacak. Onaylıyor musunuz?`)) {
-        return
-      }
-    }
-
     // Satışta stok kontrolü
     if (type === 'SALE' && qty > item.stock) {
-      setError(`Yetersiz stok! Mevcut: ${item.stock}, Satılmak istenen: ${qty}`)
+      setError(`Yetersiz stok! Mevcut: ${item.stock}`)
+      showError('Yetersiz Stok', `Satılmak istenen: ${qty}, Mevcut: ${item.stock}`)
       return
     }
+
+    const actionText = type === 'PURCHASE' ? 'Alım' : 'Satış'
+    const actionIcon = type === 'PURCHASE' ? '📦' : '💰'
+    
+    // Onay modalı göster
+    const confirmed = await confirm({
+      type: type === 'PURCHASE' ? 'success' : 'warning',
+      title: `${actionIcon} ${actionText} Onayı`,
+      message: `Bu işlemi onaylıyor musunuz?`,
+      details: [
+        { label: 'Ürün', value: item.name },
+        { label: 'Miktar', value: `${qty} adet` },
+        { label: 'İşlem', value: actionText },
+        { label: 'Mevcut Stok', value: item.stock },
+        { label: 'Yeni Stok', value: type === 'PURCHASE' ? item.stock + qty : item.stock - qty },
+      ],
+      confirmText: `${actionText} Yap`,
+      cancelText: 'Vazgeç',
+    })
+
+    if (!confirmed) return
 
     setIsProcessing(true)
     try {
@@ -72,39 +85,78 @@ export function ItemRow({ item, onEdit }: ItemRowProps) {
         type,
         currentStock: item.stock,
       })
+      
+      // Başarı animasyonu
+      setSuccessAnimation(type === 'PURCHASE' ? 'purchase' : 'sale')
+      setTimeout(() => setSuccessAnimation(null), 1000)
+      
+      // Başarı bildirimi
+      const newStock = type === 'PURCHASE' ? item.stock + qty : item.stock - qty
+      showSuccess(
+        `${actionText} Başarılı! ✓`,
+        `${item.name}: ${qty} adet ${type === 'PURCHASE' ? 'eklendi' : 'satıldı'}. Yeni stok: ${newStock}`
+      )
+      
       setQuantity('1')
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Bir hata oluştu')
+      const errorMsg = err instanceof Error ? err.message : 'Bir hata oluştu'
+      setError(errorMsg)
+      showError('İşlem Başarısız', errorMsg)
     } finally {
       setIsProcessing(false)
     }
   }
 
-  const handleDelete = () => {
-    if (confirm(`"${item.name}" ürünü silinsin mi?`)) {
-      deleteItem.mutate(item.id)
+  const handleDelete = async () => {
+    const confirmed = await confirm({
+      type: 'danger',
+      title: '🗑️ Ürün Silme',
+      message: 'Bu ürünü silmek istediğinizden emin misiniz? Bu işlem geri alınamaz.',
+      details: [
+        { label: 'Ürün Adı', value: item.name },
+        { label: 'Mevcut Stok', value: item.stock },
+      ],
+      confirmText: 'Evet, Sil',
+      cancelText: 'Vazgeç',
+    })
+
+    if (confirmed) {
+      try {
+        await deleteItem.mutateAsync(item.id)
+        showSuccess('Ürün Silindi', `"${item.name}" başarıyla silindi`)
+      } catch (err) {
+        showError('Silme Başarısız', err instanceof Error ? err.message : 'Bir hata oluştu')
+      }
     }
   }
 
   const isDisabled = isProcessing || updateStock.isPending || deleteItem.isPending
 
   return (
-    <div className="group bg-[var(--color-bg)] rounded-lg p-3 hover:bg-[var(--color-primary)]/5 transition-colors">
-      <div className="flex flex-col gap-3">
+    <div 
+      className={`
+        group bg-[var(--color-bg)] rounded-xl p-4 
+        hover:bg-gradient-to-r hover:from-[var(--color-primary)]/5 hover:to-transparent
+        transition-all duration-300 border border-transparent hover:border-[var(--color-primary)]/20
+        ${successAnimation === 'purchase' ? 'animate-bounce-in ring-2 ring-emerald-400' : ''}
+        ${successAnimation === 'sale' ? 'animate-bounce-in ring-2 ring-amber-400' : ''}
+      `}
+    >
+      <div className="flex flex-col gap-4">
         {/* Üst kısım: Ürün bilgisi ve aksiyonlar */}
-        <div className="flex items-start sm:items-center justify-between gap-2">
+        <div className="flex items-start sm:items-center justify-between gap-3">
           {/* Ürün Bilgisi */}
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
-              <span className="font-medium text-[var(--color-text)] truncate max-w-[200px] sm:max-w-none">
+              <span className="font-semibold text-[var(--color-text)] text-base">
                 {item.name}
               </span>
-              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
+              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all duration-200">
                 {onEdit && (
                   <button
                     onClick={() => onEdit(item)}
                     disabled={isDisabled}
-                    className="p-1 text-[var(--color-text-muted)] hover:text-[var(--color-primary)] hover:bg-[var(--color-primary)]/10 rounded transition-all disabled:opacity-50"
+                    className="p-1.5 text-[var(--color-text-muted)] hover:text-[var(--color-primary)] hover:bg-[var(--color-primary)]/10 rounded-lg transition-all disabled:opacity-50"
                     title="Düzenle"
                   >
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -115,7 +167,7 @@ export function ItemRow({ item, onEdit }: ItemRowProps) {
                 <button
                   onClick={handleDelete}
                   disabled={isDisabled}
-                  className="p-1 text-[var(--color-text-muted)] hover:text-red-500 hover:bg-red-50 rounded transition-all disabled:opacity-50"
+                  className="p-1.5 text-[var(--color-text-muted)] hover:text-red-500 hover:bg-red-50 rounded-lg transition-all disabled:opacity-50"
                   title="Sil"
                 >
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -124,25 +176,34 @@ export function ItemRow({ item, onEdit }: ItemRowProps) {
                 </button>
               </div>
             </div>
-            <div className="flex items-center gap-2 mt-1">
-              <span className="text-sm text-[var(--color-text-muted)]">Stok:</span>
-              <span className={`text-lg font-bold tabular-nums ${
-                item.stock === 0 
-                  ? 'text-red-500' 
-                  : item.stock < 5 
-                    ? 'text-amber-500' 
-                    : 'text-[var(--color-primary)]'
-              }`}>
+            
+            {/* Stok Göstergesi */}
+            <div className="flex items-center gap-3 mt-2">
+              <div className="flex items-center gap-2">
+                <div className={`
+                  w-3 h-3 rounded-full
+                  ${item.stock === 0 ? 'bg-red-500 animate-pulse-soft' : ''}
+                  ${item.stock > 0 && item.stock < 5 ? 'bg-amber-500 animate-pulse-soft' : ''}
+                  ${item.stock >= 5 ? 'bg-emerald-500' : ''}
+                `} />
+                <span className="text-sm text-[var(--color-text-muted)]">Stok:</span>
+              </div>
+              <span className={`
+                text-2xl font-bold tabular-nums
+                ${item.stock === 0 ? 'text-red-500' : ''}
+                ${item.stock > 0 && item.stock < 5 ? 'text-amber-500' : ''}
+                ${item.stock >= 5 ? 'text-[var(--color-primary)]' : ''}
+              `}>
                 {item.stock}
               </span>
               {item.stock === 0 && (
-                <span className="text-xs bg-red-100 text-red-600 px-2 py-0.5 rounded-full">
+                <span className="text-xs font-medium bg-red-100 text-red-700 px-2.5 py-1 rounded-full animate-pulse-soft">
                   Tükendi
                 </span>
               )}
               {item.stock > 0 && item.stock < 5 && (
-                <span className="text-xs bg-amber-100 text-amber-600 px-2 py-0.5 rounded-full">
-                  Az kaldı
+                <span className="text-xs font-medium bg-amber-100 text-amber-700 px-2.5 py-1 rounded-full">
+                  Az Kaldı
                 </span>
               )}
             </div>
@@ -150,8 +211,9 @@ export function ItemRow({ item, onEdit }: ItemRowProps) {
         </div>
 
         {/* Alt kısım: Stok Kontrolleri */}
-        <div className="flex items-center gap-2 flex-wrap">
-          <div className="flex items-center gap-1">
+        <div className="flex items-center gap-3 flex-wrap">
+          {/* Miktar Kontrolü */}
+          <div className="flex items-center bg-white rounded-xl border border-[var(--color-border)] overflow-hidden shadow-sm">
             <button
               type="button"
               onClick={() => {
@@ -159,7 +221,7 @@ export function ItemRow({ item, onEdit }: ItemRowProps) {
                 if (current > 1) setQuantity(String(current - 1))
               }}
               disabled={isDisabled || parseInt(quantity) <= 1}
-              className="w-8 h-8 flex items-center justify-center rounded-lg border border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] disabled:opacity-40 transition-all"
+              className="w-10 h-10 flex items-center justify-center text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] hover:text-[var(--color-text)] disabled:opacity-40 transition-all text-lg font-medium"
             >
               −
             </button>
@@ -173,7 +235,7 @@ export function ItemRow({ item, onEdit }: ItemRowProps) {
               onKeyDown={handleKeyDown}
               disabled={isDisabled}
               placeholder="1"
-              className="w-16 px-2 py-1.5 text-sm text-center rounded-lg border border-[var(--color-border)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] focus:border-transparent disabled:opacity-50 disabled:bg-gray-50"
+              className="w-14 py-2 text-center font-semibold text-[var(--color-text)] focus:outline-none disabled:opacity-50 disabled:bg-gray-50 border-x border-[var(--color-border)]"
             />
             <button
               type="button"
@@ -182,16 +244,24 @@ export function ItemRow({ item, onEdit }: ItemRowProps) {
                 setQuantity(String(current + 1))
               }}
               disabled={isDisabled}
-              className="w-8 h-8 flex items-center justify-center rounded-lg border border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] disabled:opacity-40 transition-all"
+              className="w-10 h-10 flex items-center justify-center text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] hover:text-[var(--color-text)] disabled:opacity-40 transition-all text-lg font-medium"
             >
               +
             </button>
           </div>
           
+          {/* Alım Butonu */}
           <button
             onClick={() => handleStockChange('PURCHASE')}
             disabled={isDisabled || !quantity}
-            className="px-3 py-1.5 text-sm font-medium bg-[var(--color-success)] text-white rounded-lg hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center gap-1.5 min-w-[90px] justify-center"
+            className={`
+              px-5 py-2.5 text-sm font-semibold text-white rounded-xl
+              bg-gradient-to-r from-emerald-500 to-green-600 
+              hover:from-emerald-600 hover:to-green-700 hover:shadow-lg hover:glow-success
+              disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:shadow-none
+              transition-all duration-200 flex items-center gap-2 min-w-[110px] justify-center
+              shadow-md
+            `}
           >
             {isProcessing && updateStock.variables?.type === 'PURCHASE' ? (
               <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
@@ -201,17 +271,25 @@ export function ItemRow({ item, onEdit }: ItemRowProps) {
             ) : (
               <>
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 4v16m8-8H4" />
                 </svg>
                 Alındı
               </>
             )}
           </button>
           
+          {/* Satış Butonu */}
           <button
             onClick={() => handleStockChange('SALE')}
             disabled={isDisabled || !quantity || item.stock === 0}
-            className="px-3 py-1.5 text-sm font-medium bg-[var(--color-accent)] text-white rounded-lg hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center gap-1.5 min-w-[90px] justify-center"
+            className={`
+              px-5 py-2.5 text-sm font-semibold text-white rounded-xl
+              bg-gradient-to-r from-amber-500 to-orange-500 
+              hover:from-amber-600 hover:to-orange-600 hover:shadow-lg hover:glow-warning
+              disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:shadow-none
+              transition-all duration-200 flex items-center gap-2 min-w-[110px] justify-center
+              shadow-md
+            `}
           >
             {isProcessing && updateStock.variables?.type === 'SALE' ? (
               <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
@@ -221,7 +299,7 @@ export function ItemRow({ item, onEdit }: ItemRowProps) {
             ) : (
               <>
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 12H4" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M20 12H4" />
                 </svg>
                 Satıldı
               </>
@@ -232,11 +310,11 @@ export function ItemRow({ item, onEdit }: ItemRowProps) {
       
       {/* Hata Mesajı */}
       {error && (
-        <div className="mt-2 p-2 text-sm text-red-600 bg-red-50 rounded-lg border border-red-200 flex items-center gap-2">
-          <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <div className="mt-3 p-3 text-sm text-red-700 bg-red-50 rounded-xl border border-red-200 flex items-center gap-2 animate-shake">
+          <svg className="w-5 h-5 flex-shrink-0 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
-          {error}
+          <span>{error}</span>
         </div>
       )}
     </div>
