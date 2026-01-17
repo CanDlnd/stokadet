@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import type { Category } from '../types/database'
 import { useDeleteCategory, useUpdateCategory } from '../hooks/useCategories'
+import { useItems } from '../hooks/useItems'
 import { ItemList } from './ItemList'
 import { useNotification } from '../contexts/NotificationContext'
 
@@ -16,13 +17,44 @@ export function CategoryCard({ category, searchQuery = '' }: CategoryCardProps) 
   const deleteCategory = useDeleteCategory()
   const updateCategory = useUpdateCategory()
   const { showSuccess, showError, confirm } = useNotification()
+  
+  // Ürünleri al (arama için kontrol amaçlı)
+  const { data: items } = useItems(category.id)
+
+  // Arama eşleşmesini kontrol et
+  const searchMatch = useMemo(() => {
+    if (!searchQuery.trim()) {
+      return { show: true, categoryMatch: false, itemMatch: false }
+    }
+    
+    const query = searchQuery.toLowerCase().trim()
+    
+    // Kategori adı eşleşiyor mu?
+    const categoryMatch = category.name.toLowerCase().includes(query)
+    
+    // Herhangi bir ürün eşleşiyor mu?
+    const itemMatch = items?.some(item => 
+      item.name.toLowerCase().includes(query)
+    ) || false
+    
+    return {
+      show: categoryMatch || itemMatch,
+      categoryMatch,
+      itemMatch
+    }
+  }, [searchQuery, category.name, items])
 
   // Arama yapıldığında otomatik aç
   useEffect(() => {
-    if (searchQuery) {
+    if (searchQuery && searchMatch.show) {
       setIsExpanded(true)
     }
-  }, [searchQuery])
+  }, [searchQuery, searchMatch.show])
+
+  // Eşleşme yoksa kategoriyi gösterme
+  if (searchQuery && !searchMatch.show) {
+    return null
+  }
 
   const handleDelete = async () => {
     const confirmed = await confirm({
@@ -118,6 +150,11 @@ export function CategoryCard({ category, searchQuery = '' }: CategoryCardProps) 
                 <h3 className="text-lg font-bold text-[var(--color-text)] truncate flex items-center gap-2">
                   <span className="text-xl">📁</span>
                   {category.name}
+                  {searchQuery && searchMatch.categoryMatch && (
+                    <span className="text-xs bg-[var(--color-primary)]/10 text-[var(--color-primary)] px-2 py-0.5 rounded-full">
+                      Eşleşti
+                    </span>
+                  )}
                 </h3>
               </button>
             )}
@@ -157,7 +194,11 @@ export function CategoryCard({ category, searchQuery = '' }: CategoryCardProps) 
         }`}
       >
         <div className="p-5">
-          <ItemList categoryId={category.id} searchQuery={searchQuery} />
+          <ItemList 
+            categoryId={category.id} 
+            searchQuery={searchQuery}
+            categoryMatched={searchMatch.categoryMatch}
+          />
         </div>
       </div>
     </div>
